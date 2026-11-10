@@ -1,35 +1,40 @@
 import {
   ArrowRight,
   ArrowUp,
-  BarChart3,
   Bookmark,
   BookOpen,
   Check,
   ChevronDown,
   ChevronRight,
   ChevronUp,
-  Clock3,
   FileText,
   Home,
   List,
   Menu,
   Moon,
-  MoreHorizontal,
   Search,
-  Sparkles,
   Sun,
+  Trash2,
   X,
   type LucideIcon,
 } from "lucide-react";
 import {
   buildBookSegments,
-  chapters,
+  chaptersEn,
+  getChapters,
+  getSectionMetadata,
+  getWeeklyGoalInfo,
   initialBookmarks,
   initialNotes,
+  parseSectionId,
   sectionId,
+  uiTranslations,
   type BookSegment,
+  type ChapterDefinition,
   type ContentParagraph,
+  type Language,
   type TextGroup,
+  type WeeklyGoalInfo,
 } from "./bookData";
 import {
   useEffect,
@@ -37,6 +42,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
   type RefObject,
 } from "react";
 
@@ -46,8 +52,7 @@ type NavigationId =
   | "reader"
   | "contents"
   | "bookmarks"
-  | "notes"
-  | "progress";
+  | "notes";
 
 interface SavedPassage {
   title: string;
@@ -61,12 +66,6 @@ interface ReadingNote {
   sectionId: string;
 }
 
-interface SectionReference {
-  chapterIndex: number;
-  sectionIndex: number;
-  id: string;
-}
-
 interface SearchResult {
   title: string;
   chapter: string;
@@ -74,131 +73,130 @@ interface SearchResult {
   id: string;
 }
 
-interface NavigationItem {
-  label: string;
+interface NavigationItemConfig {
   id: NavigationId;
   target: string;
   Icon: LucideIcon;
+  labelKey: keyof (typeof uiTranslations)["en"];
 }
 
-const navigationItems: NavigationItem[] = [
-  { label: "Home", id: "home", target: "home", Icon: Home },
-  { label: "Read the Book", id: "reader", target: "reader", Icon: BookOpen },
-  { label: "Table of Contents", id: "contents", target: "contents", Icon: List },
+const navigationConfig: NavigationItemConfig[] = [
+  { labelKey: "navHome", id: "home", target: "home", Icon: Home },
+  { labelKey: "navReader", id: "reader", target: "reader", Icon: BookOpen },
   {
-    label: "My Bookmarks",
+    labelKey: "navContents",
+    id: "contents",
+    target: "sidebar-book-contents",
+    Icon: List,
+  },
+  {
+    labelKey: "navBookmarks",
     id: "bookmarks",
     target: "bookmarks",
     Icon: Bookmark,
   },
-  { label: "My Notes", id: "notes", target: "notes", Icon: FileText },
-  {
-    label: "Reading Progress",
-    id: "progress",
-    target: "progress",
-    Icon: BarChart3,
-  },
+  { labelKey: "navNotes", id: "notes", target: "notes", Icon: FileText },
 ];
 
-const chapterJumpLabels = [
-  "The Noble Qur'an",
-  "Learning the Noble Qur'an",
-  "Memorizing",
-  "Reviewing",
-  "The Isnād in the Noble Qur'an",
-];
-
-const suggestions = ["memorization", "review", "isnād", "recitation"];
 const lineHeightSteps = [1.9, 2.1, 1.7];
-const sectionCount = chapters.reduce(
-  (count, chapter) => count + chapter.sections.length,
-  0,
-);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-function getSectionReference(
-  title: string,
-  chapterTitle?: string,
-): SectionReference | undefined {
-  for (const [chapterIndex, chapter] of chapters.entries()) {
-    if (chapterTitle && chapter.title !== chapterTitle) continue;
-    const sectionIndex = chapter.sections.indexOf(title);
-    if (sectionIndex >= 0) {
-      return {
-        chapterIndex,
-        sectionIndex,
-        id: sectionId(chapterIndex, sectionIndex),
-      };
-    }
+function getTodayString(): string {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getCurrentWeekDates(): string[] {
+  const now = new Date();
+  const day = now.getDay();
+  // Monday is start of week: Monday=1, Sunday=0
+  const diffToMonday = (day + 6) % 7;
+  const monday = new Date(now);
+  monday.setDate(now.getDate() - diffToMonday);
+  monday.setHours(0, 0, 0, 0);
+
+  const dates: string[] = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const dayOfMonth = String(d.getDate()).padStart(2, "0");
+    dates.push(`${year}-${month}-${dayOfMonth}`);
   }
-  return undefined;
+  return dates;
+}
+
+function loadReadingActivity(): string[] {
+  try {
+    const stored = localStorage.getItem("quran-reading-activity");
+    if (!stored) return [];
+    const parsed = JSON.parse(stored);
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string")
+      : [];
+  } catch {
+    return [];
+  }
 }
 
 function loadSavedPassages(): SavedPassage[] {
   try {
     const stored = localStorage.getItem("quran-bookmarks");
-    if (!stored) return initialBookmarks;
+    if (!stored) return initialBookmarks; // Empty array [] by default
 
     const parsed: unknown = JSON.parse(stored);
     if (!Array.isArray(parsed)) {
-      console.warn("Stored bookmarks are not a list. Restoring the sample bookmarks.");
-      return initialBookmarks;
+      return [];
     }
 
     const bookmarks: SavedPassage[] = [];
     for (const item of parsed) {
-      if (!isRecord(item) || typeof item.title !== "string") {
-        console.warn("Ignoring a bookmark with an invalid shape.");
-        continue;
+      if (!isRecord(item)) continue;
+
+      let id = typeof item.sectionId === "string" ? item.sectionId : undefined;
+      if (!id && typeof item.title === "string") {
+        for (const [cIndex, ch] of chaptersEn.entries()) {
+          const sIndex = ch.sections.indexOf(item.title);
+          if (sIndex >= 0) {
+            id = sectionId(cIndex, sIndex);
+            break;
+          }
+        }
       }
 
-      const chapterTitle =
-        typeof item.chapter === "string" ? item.chapter : undefined;
-      const reference = getSectionReference(item.title, chapterTitle);
-      const id =
-        typeof item.sectionId === "string"
-          ? item.sectionId
-          : reference?.id;
-      const matched = id
-        ? chapters.some((chapter, chapterIndex) =>
-            chapter.sections.some(
-              (title, sectionIndex) =>
-                title === item.title &&
-                sectionId(chapterIndex, sectionIndex) === id,
-            ),
-          )
-        : false;
-
-      if (!reference || !id || !matched) {
-        console.warn(`Ignoring bookmark "${item.title}" because its section is unavailable.`);
-        continue;
-      }
+      if (!id || !parseSectionId(id)) continue;
+      const parsedMeta = parseSectionId(id)!;
+      const chapter = chaptersEn[parsedMeta.chapterIndex];
+      const title = chapter.sections[parsedMeta.sectionIndex];
 
       bookmarks.push({
-        title: item.title,
-        chapter: chapterTitle ?? chapters[reference.chapterIndex].title,
+        title: typeof item.title === "string" ? item.title : title,
+        chapter: typeof item.chapter === "string" ? item.chapter : chapter.title,
         sectionId: id,
       });
     }
     return bookmarks;
   } catch (error) {
     console.warn("Could not read bookmarks from local storage.", error);
-    return initialBookmarks;
+    return [];
   }
 }
 
 function loadReadingNotes(): ReadingNote[] {
   try {
     const stored = localStorage.getItem("quran-notes");
-    if (!stored) return initialNotes;
+    if (!stored) return initialNotes; // Empty array [] by default
 
     const parsed: unknown = JSON.parse(stored);
     if (!Array.isArray(parsed)) {
-      console.warn("Stored notes are not a list. Restoring the sample notes.");
-      return initialNotes;
+      return [];
     }
 
     const notes: ReadingNote[] = [];
@@ -208,41 +206,32 @@ function loadReadingNotes(): ReadingNote[] {
         typeof item.title !== "string" ||
         typeof item.text !== "string"
       ) {
-        console.warn("Ignoring a note with an invalid shape.");
         continue;
       }
 
-      const reference =
-        typeof item.sectionId === "string"
-          ? chapters
-              .flatMap((chapter, chapterIndex) =>
-                chapter.sections.map((title, sectionIndex) => ({
-                  title,
-                  chapterIndex,
-                  sectionIndex,
-                  id: sectionId(chapterIndex, sectionIndex),
-                })),
-              )
-              .find((section) => section.id === item.sectionId)
-          : getSectionReference(
-              typeof item.section === "string" ? item.section : item.title,
-            );
-
-      if (!reference) {
-        console.warn(`Ignoring note "${item.title}" because its section is unavailable.`);
-        continue;
+      let id = typeof item.sectionId === "string" ? item.sectionId : undefined;
+      if (!id) {
+        for (const [cIndex, ch] of chaptersEn.entries()) {
+          const sIndex = ch.sections.indexOf(item.title);
+          if (sIndex >= 0) {
+            id = sectionId(cIndex, sIndex);
+            break;
+          }
+        }
       }
+
+      if (!id || !parseSectionId(id)) continue;
 
       notes.push({
         title: item.title,
         text: item.text,
-        sectionId: reference.id,
+        sectionId: id,
       });
     }
     return notes;
   } catch (error) {
     console.warn("Could not read notes from local storage.", error);
-    return initialNotes;
+    return [];
   }
 }
 
@@ -256,6 +245,16 @@ function loadTheme(): Theme {
   }
 }
 
+function loadLanguage(): Language {
+  try {
+    const stored = localStorage.getItem("quran-language");
+    return stored === "ar" ? "ar" : "en";
+  } catch (error) {
+    console.warn("Could not read the selected language from local storage.", error);
+    return "en";
+  }
+}
+
 function getParagraphs(group: TextGroup): ContentParagraph[] {
   return group.paragraphs;
 }
@@ -264,41 +263,67 @@ function isArabicText(text: string): boolean {
   return /[\u0600-\u06ff]/u.test(text) && !/[A-Za-z]{12,}/u.test(text);
 }
 
-function Paragraph({ paragraph }: { paragraph: ContentParagraph }) {
+function Paragraph({
+  paragraph,
+  language,
+}: {
+  paragraph: ContentParagraph;
+  language: Language;
+}) {
   if (paragraph.kind === "subheading") {
-    if (paragraph.text === "INTRODUCTION") {
+    if (
+      paragraph.text === "INTRODUCTION" ||
+      paragraph.text === "المقدمة"
+    ) {
       return <span className="document-subheading">{paragraph.text}</span>;
     }
 
     return <h4 className="document-subheading">{paragraph.text}</h4>;
   }
 
+  const isAr = language === "ar" || isArabicText(paragraph.text);
   const className = [
     "document-paragraph",
     paragraph.kind === "footnote" ? "document-footnote" : "",
-    isArabicText(paragraph.text) ? "document-arabic" : "",
+    isAr ? "document-arabic" : "",
   ]
     .filter(Boolean)
     .join(" ");
 
   return (
-    <p className={className} dir="auto">
+    <p className={className} dir={isAr ? "rtl" : "ltr"}>
       {paragraph.text}
     </p>
   );
 }
 
-function TextGroupContent({ group }: { group: TextGroup }) {
+function TextGroupContent({
+  group,
+  language,
+}: {
+  group: TextGroup;
+  language: Language;
+}) {
   return (
     <>
       {getParagraphs(group).map((paragraph, index) => (
-        <Paragraph key={`${index}-${paragraph.text.slice(0, 20)}`} paragraph={paragraph} />
+        <Paragraph
+          key={`${index}-${paragraph.text.slice(0, 20)}`}
+          paragraph={paragraph}
+          language={language}
+        />
       ))}
     </>
   );
 }
 
-function Logo({ compact = false }: { compact?: boolean }) {
+function Logo({
+  compact = false,
+  t,
+}: {
+  compact?: boolean;
+  t: (typeof uiTranslations)["en"];
+}) {
   return (
     <a
       className={`brand ${compact ? "brand-compact" : ""}`}
@@ -312,32 +337,36 @@ function Logo({ compact = false }: { compact?: boolean }) {
       </span>
       <span className="brand-copy">
         <strong lang="ar" dir="rtl">
-          أسهل طريقة لحفظ القرآن الكريم
+          {t.heroArabicTitle.replace("\n", " ")}
         </strong>
-        <small>Qur’an learning companion</small>
+        <small>{t.siteSubtitle}</small>
       </span>
     </a>
   );
 }
 
 function Topbar({
-  progress,
   onBookmark,
   onSearch,
   onTheme,
   onMenu,
+  onToggleLanguage,
   mobile,
   bookmarked,
   searchTriggerRef,
+  language,
+  t,
 }: {
-  progress: number;
   onBookmark: () => void;
   onSearch: () => void;
   onTheme: () => void;
   onMenu: () => void;
+  onToggleLanguage: () => void;
   mobile: boolean;
   bookmarked: boolean;
   searchTriggerRef: RefObject<HTMLButtonElement | null>;
+  language: Language;
+  t: (typeof uiTranslations)["en"];
 }) {
   return (
     <header className="topbar">
@@ -345,40 +374,41 @@ function Topbar({
         <button
           className="header-icon menu-trigger"
           type="button"
-          aria-label="Open navigation"
+          aria-label={t.openNav}
           onClick={onMenu}
         >
           <Menu aria-hidden="true" />
         </button>
-        <Logo />
+        <Logo t={t} />
         <button
           ref={searchTriggerRef}
           className={`top-search ${mobile ? "top-search-compact" : ""}`}
           type="button"
           onClick={onSearch}
-          aria-label="Search the book"
+          aria-label={t.searchPlaceholder}
         >
           <Search aria-hidden="true" />
-          <span>Search the book</span>
-          <kbd>⌘ K</kbd>
+          <span>{t.searchPlaceholder}</span>
+          <kbd>{t.searchKbd}</kbd>
         </button>
-        <div className="top-progress">
-          <span
-            className="top-progress-ring"
-            style={{ "--progress-angle": `${progress * 3.6}deg` } as CSSProperties}
-            role="img"
-            aria-label={`${progress}% reading progress`}
-          >
-            <span>{progress}%</span>
-          </span>
-        </div>
         <div className="topbar-actions">
+          <button
+            className="lang-selector"
+            type="button"
+            onClick={onToggleLanguage}
+            aria-label={t.langSwitchAria}
+            title={language === "en" ? "التبديل إلى العربية" : "Switch to English"}
+          >
+            <span className={language === "en" ? "lang-active" : ""}>EN</span>
+            <span className="lang-sep">/</span>
+            <span className={language === "ar" ? "lang-active" : ""}>عربي</span>
+          </button>
           <button
             className={`header-icon ${bookmarked ? "is-active" : ""}`}
             type="button"
             onClick={onBookmark}
-            aria-label={bookmarked ? "Remove current bookmark" : "Bookmark current section"}
-            title={bookmarked ? "Remove bookmark" : "Bookmark current section"}
+            aria-label={bookmarked ? t.removeBookmark : t.bookmarkCurrent}
+            title={bookmarked ? t.removeBookmark : t.bookmarkCurrent}
             aria-pressed={bookmarked}
           >
             <Bookmark aria-hidden="true" />
@@ -387,8 +417,8 @@ function Topbar({
             className="header-icon"
             type="button"
             onClick={onTheme}
-            aria-label="Toggle theme"
-            title="Toggle theme"
+            aria-label={t.toggleTheme}
+            title={t.toggleTheme}
           >
             <Moon className="moon-icon" aria-hidden="true" />
             <Sun className="sun-icon" aria-hidden="true" />
@@ -404,29 +434,110 @@ function Sidebar({
   activeNavigation,
   activeSectionId,
   bookmarks,
-  expandedChapters,
+  bookContentsOpen,
+  currentChapters,
+  goalInfo,
   isOpen,
   isMobile,
+  language,
   onClose,
+  onCloseBookContents,
   onNavigate,
-  onToggleChapter,
+  onToggleBookContents,
+  t,
 }: {
   activeChapterIndex: number;
   activeNavigation: NavigationId;
   activeSectionId: string;
   bookmarks: SavedPassage[];
-  expandedChapters: number[];
+  bookContentsOpen: boolean;
+  currentChapters: ChapterDefinition[];
+  goalInfo: WeeklyGoalInfo;
   isOpen: boolean;
   isMobile: boolean;
+  language: Language;
   onClose: () => void;
+  onCloseBookContents: () => void;
   onNavigate: (target: string, navigationId?: NavigationId) => void;
-  onToggleChapter: (chapterIndex: number) => void;
+  onToggleBookContents: () => void;
+  t: (typeof uiTranslations)["en"];
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
+  const contentsRef = useRef<HTMLDivElement>(null);
+  const contentsTriggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (isOpen && isMobile) closeRef.current?.focus();
   }, [isMobile, isOpen]);
+
+  useEffect(() => {
+    if (!bookContentsOpen) return;
+
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (
+        event.target instanceof Node &&
+        !contentsRef.current?.contains(event.target)
+      ) {
+        onCloseBookContents();
+      }
+    };
+
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    return () => document.removeEventListener("pointerdown", closeOnOutsideClick);
+  }, [bookContentsOpen, onCloseBookContents]);
+
+  function navigateFromContents(target: string) {
+    onCloseBookContents();
+    onNavigate(target, "reader");
+  }
+
+  function handleTriggerKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>) {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      if (!bookContentsOpen) {
+        onToggleBookContents();
+      }
+      setTimeout(() => {
+        const firstItem = contentsRef.current?.querySelector<HTMLElement>(
+          ".toc-dropdown button:not(:disabled), .toc-dropdown a[href]",
+        );
+        firstItem?.focus();
+      }, 50);
+    } else if (event.key === "Escape" && bookContentsOpen) {
+      event.preventDefault();
+      onCloseBookContents();
+    }
+  }
+
+  function handleContentsKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      onCloseBookContents();
+      contentsTriggerRef.current?.focus();
+      return;
+    }
+
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    const items = Array.from(
+      event.currentTarget.querySelectorAll<HTMLElement>(
+        "button:not(:disabled), a[href]",
+      ),
+    );
+    const currentIndex = items.indexOf(document.activeElement as HTMLElement);
+    if (currentIndex < 0) return;
+
+    event.preventDefault();
+    const nextIndex =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? items.length - 1
+          : (currentIndex +
+              (event.key === "ArrowDown" ? 1 : items.length - 1)) %
+            items.length;
+    items[nextIndex]?.focus();
+  }
 
   return (
     <>
@@ -434,7 +545,7 @@ function Sidebar({
         <button
           className="drawer-scrim"
           type="button"
-          aria-label="Close navigation"
+          aria-label={t.closeNav}
           onClick={onClose}
         />
       )}
@@ -444,106 +555,126 @@ function Sidebar({
         aria-hidden={isMobile && !isOpen}
       >
         <div className="drawer-header">
-          <Logo compact />
+          <Logo compact t={t} />
           <button
             ref={closeRef}
             className="header-icon drawer-close"
             type="button"
-            aria-label="Close navigation"
+            aria-label={t.closeNav}
             onClick={onClose}
           >
             <X aria-hidden="true" />
           </button>
         </div>
-        <nav className="main-nav" aria-label="Your library">
-          <p className="eyebrow sidebar-label">Your library</p>
-          {navigationItems.map(({ label, id, target, Icon }) => (
-            <a
-              key={id}
-              className={`nav-link ${activeNavigation === id ? "active" : ""}`}
-              href={`#${target}`}
-              aria-current={activeNavigation === id ? "page" : undefined}
-              onClick={(event) => {
-                event.preventDefault();
-                onNavigate(target, id);
-              }}
-            >
-              <Icon size={18} strokeWidth={1.7} aria-hidden="true" />
-              <span>{label}</span>
-              {id === "bookmarks" && (
-                <span className="nav-count">{bookmarks.length}</span>
-              )}
-            </a>
-          ))}
-        </nav>
-
-        <section className="sidebar-toc" id="sidebar-book-contents">
-          <p className="eyebrow toc-heading">
-            <span>Book contents</span>
-            <ChevronDown size={16} aria-hidden="true" />
-          </p>
-          {chapters.map((chapter, chapterIndex) => {
-            const expanded = expandedChapters.includes(chapterIndex);
-            return (
-              <div className="toc-chapter" key={chapter.title}>
-                <div className="toc-chapter-row">
-                  <button
-                    className={`toc-chapter-number ${chapterIndex === activeChapterIndex ? "current" : ""}`}
-                    type="button"
-                    aria-label={`Go to chapter ${chapterIndex + 1}`}
-                    onClick={() => onNavigate(`chapter-${chapterIndex + 1}`, "reader")}
-                  >
-                    {String(chapterIndex + 1).padStart(2, "0")}
-                  </button>
-                  <button
-                    className="toc-chapter-title"
-                    type="button"
-                    aria-expanded={expanded}
-                    onClick={() => {
-                      onToggleChapter(chapterIndex);
-                    }}
-                  >
-                    <span>{chapter.title}</span>
-                    {expanded ? (
-                      <ChevronDown size={15} aria-hidden="true" />
-                    ) : (
-                      <ChevronRight size={15} aria-hidden="true" />
-                    )}
-                  </button>
-                </div>
-                {expanded && (
-                  <div className="toc-section-list">
-                    {chapter.sections.map((title, sectionIndex) => {
-                      const id = sectionId(chapterIndex, sectionIndex);
-                      return (
-                        <a
-                          key={id}
-                          className={`toc-section-link ${activeSectionId === id ? "active" : ""}`}
-                          href={`#${id}`}
-                          onClick={(event) => {
-                            event.preventDefault();
-                            onNavigate(id, "reader");
-                          }}
+        <nav className="main-nav" aria-label={t.library}>
+          <p className="eyebrow sidebar-label">{t.library}</p>
+          {navigationConfig.map(({ labelKey, id, target, Icon }) => {
+            const label = t[labelKey] as string;
+            return id === "contents" ? (
+              <div className="nav-dropdown" key={id} ref={contentsRef}>
+                <button
+                  ref={contentsTriggerRef}
+                  id="book-contents-trigger"
+                  className={`nav-link nav-dropdown-trigger ${activeNavigation === id || bookContentsOpen ? "active" : ""}`}
+                  type="button"
+                  aria-expanded={bookContentsOpen}
+                  aria-controls="book-contents-dropdown"
+                  aria-haspopup="true"
+                  onClick={onToggleBookContents}
+                  onKeyDown={handleTriggerKeyDown}
+                >
+                  <Icon size={18} strokeWidth={1.7} aria-hidden="true" />
+                  <span>{label}</span>
+                  <ChevronDown
+                    className={`nav-dropdown-chevron${bookContentsOpen ? " is-open" : ""}`}
+                    size={16}
+                    aria-hidden="true"
+                  />
+                </button>
+                <div
+                  id="book-contents-dropdown"
+                  className={`toc-dropdown${bookContentsOpen ? " is-open" : ""}`}
+                  aria-hidden={!bookContentsOpen}
+                  aria-labelledby="book-contents-trigger"
+                  role="region"
+                  onKeyDown={handleContentsKeyDown}
+                >
+                  <nav className="toc-dropdown-inner" aria-label="Book chapters and sections">
+                    {currentChapters.map((chapter, chapterIndex) => (
+                      <div className="toc-chapter" key={`chapter-${chapterIndex}-${chapter.title}`}>
+                        <button
+                          className={`toc-chapter-title ${chapterIndex === activeChapterIndex ? "current" : ""}`}
+                          type="button"
+                          onClick={() =>
+                            navigateFromContents(`chapter-${chapterIndex + 1}`)
+                          }
                         >
-                          <span className="toc-dot" aria-hidden="true" />
-                          <span>{title}</span>
-                        </a>
-                      );
-                    })}
-                  </div>
-                )}
+                          <span className="toc-chapter-index">
+                            {String(chapterIndex + 1).padStart(2, "0")}
+                          </span>
+                          <span>{chapter.title}</span>
+                          <ChevronRight
+                            size={14}
+                            className={language === "ar" ? "rtl-flip" : ""}
+                            aria-hidden="true"
+                          />
+                        </button>
+                        <div className="toc-section-list">
+                          {chapter.sections.map((title, sectionIndex) => {
+                            const sectionTarget = sectionId(chapterIndex, sectionIndex);
+                            return (
+                              <a
+                                key={sectionTarget}
+                                className={`toc-section-link ${activeSectionId === sectionTarget ? "active" : ""}`}
+                                href={`#${sectionTarget}`}
+                                onClick={(event) => {
+                                  event.preventDefault();
+                                  navigateFromContents(sectionTarget);
+                                }}
+                              >
+                                <span className="toc-dot" aria-hidden="true" />
+                                <span>{title}</span>
+                              </a>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </nav>
+                </div>
               </div>
+            ) : (
+              <a
+                key={id}
+                className={`nav-link ${activeNavigation === id ? "active" : ""}`}
+                href={`#${target}`}
+                aria-current={activeNavigation === id ? "page" : undefined}
+                onClick={(event) => {
+                  event.preventDefault();
+                  onNavigate(target, id);
+                }}
+              >
+                <Icon size={18} strokeWidth={1.7} aria-hidden="true" />
+                <span>{label}</span>
+                {id === "bookmarks" && (
+                  <span className="nav-count">{bookmarks.length}</span>
+                )}
+              </a>
             );
           })}
-        </section>
+        </nav>
 
-        <section className="sidebar-goal" aria-label="Weekly reading goal">
+        <section className="sidebar-goal" aria-label={t.weeklyGoal}>
           <div className="goal-heading">
-            <span>Weekly reading goal</span>
-            <strong>4 of 5 days</strong>
+            <span>{t.weeklyGoal}</span>
+            <strong>{goalInfo.progressText}</strong>
           </div>
-          <p>One more day to reach your goal</p>
-          <div className="goal-track" aria-label="4 of 5 days complete">
+          <p>{goalInfo.statusText}</p>
+          <div
+            className="goal-track"
+            aria-label={goalInfo.progressText}
+            style={{ "--goal-progress": `${goalInfo.percent}%` } as CSSProperties}
+          >
             <span />
           </div>
         </section>
@@ -552,44 +683,18 @@ function Sidebar({
   );
 }
 
-function ChapterNavigation({
-  activeChapterIndex,
-  onNavigate,
+function ChapterCard({
+  chapterIndex,
+  currentChapters,
+  language,
+  t,
 }: {
-  activeChapterIndex: number;
-  onNavigate: (target: string, navigationId?: NavigationId) => void;
+  chapterIndex: number;
+  currentChapters: ChapterDefinition[];
+  language: Language;
+  t: (typeof uiTranslations)["en"];
 }) {
-  return (
-    <section className="chapter-nav-wrap" id="contents" aria-label="Chapter navigation">
-      <div className="chapter-nav-inner">
-        <span className="eyebrow jump-label">Jump to</span>
-        {chapters.map((chapter, index) => (
-          <button
-            key={chapter.title}
-            className={`chapter-jump ${activeChapterIndex === index ? "active" : ""}`}
-            type="button"
-            onClick={() => onNavigate(`chapter-${index + 1}`, "reader")}
-            aria-label={`Go to chapter ${index + 1}: ${chapter.title}`}
-          >
-            <span>{String(index + 1).padStart(2, "0")}</span>
-            <strong>{chapterJumpLabels[index]}</strong>
-          </button>
-        ))}
-        <button
-          className="chapter-jump all-contents"
-          type="button"
-          onClick={() => onNavigate("reader", "reader")}
-        >
-          <List size={15} aria-hidden="true" />
-          <strong>All contents</strong>
-        </button>
-      </div>
-    </section>
-  );
-}
-
-function ChapterCard({ chapterIndex }: { chapterIndex: number }) {
-  const chapter = chapters[chapterIndex];
+  const chapter = currentChapters[chapterIndex];
 
   return (
     <section
@@ -598,13 +703,15 @@ function ChapterCard({ chapterIndex }: { chapterIndex: number }) {
       aria-labelledby={`chapter-title-${chapterIndex + 1}`}
     >
       <div className="chapter-number">
-        <span className="eyebrow">Chapter</span>
+        <span className="eyebrow">{t.chapterLabel}</span>
         <strong>{String(chapterIndex + 1).padStart(2, "0")}</strong>
       </div>
       <div className="chapter-heading-copy">
-        <p className="chapter-arabic" lang="ar" dir="rtl">
-          {chapter.arabic}
-        </p>
+        {language === "en" && (
+          <p className="chapter-arabic" lang="ar" dir="rtl">
+            {chapter.arabic}
+          </p>
+        )}
         <h2 id={`chapter-title-${chapterIndex + 1}`}>{chapter.title}</h2>
         <div className="gold-rule" aria-hidden="true" />
         <p className="chapter-subtitle">{chapter.subtitle}</p>
@@ -616,29 +723,37 @@ function ChapterCard({ chapterIndex }: { chapterIndex: number }) {
 function BookContent({
   activeSectionId,
   bookmarkedSections,
+  currentChapters,
+  language,
   onBeginAgain,
   onBookmark,
   segments,
+  t,
 }: {
   activeSectionId: string;
   bookmarkedSections: Set<string>;
+  currentChapters: ChapterDefinition[];
+  language: Language;
   onBeginAgain: () => void;
   onBookmark: (id: string) => void;
   segments: BookSegment[];
+  t: (typeof uiTranslations)["en"];
 }) {
   return (
-    <article className="book-document" id="book-content">
+    <article className="book-document" id="book-content" dir={language === "ar" ? "rtl" : "ltr"}>
       <header className="book-opening">
         <p className="bismillah" lang="ar" dir="rtl">
-          بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيم
+          {t.bismillah}
         </p>
-        <p className="bismillah-translation">
-          In the name of Allah, the Most Compassionate, the Most Merciful
-        </p>
+        {language === "en" && (
+          <p className="bismillah-translation">
+            {t.bismillahTrans}
+          </p>
+        )}
         <div className="author-rule" />
-        <h2>Dr. ʿAbd al-Muḥsin ibn Muḥammad al-Qāsim</h2>
-        <p>Imam and Khatib of the Prophet&apos;s Mosque</p>
-        <strong className="edition">First edition · 1443 AH / 2022 CE</strong>
+        <h2>{t.authorName}</h2>
+        <p>{t.authorRole}</p>
+        <strong className="edition">{t.edition}</strong>
       </header>
 
       {segments.map((segment, index) => {
@@ -647,6 +762,9 @@ function BookContent({
             <ChapterCard
               key={`chapter-${segment.chapterIndex}-${index}`}
               chapterIndex={segment.chapterIndex}
+              currentChapters={currentChapters}
+              language={language}
+              t={t}
             />
           );
         }
@@ -655,7 +773,8 @@ function BookContent({
           const chapterIndex = segment.chapterIndex ?? 0;
           const sectionIndex = segment.sectionIndex ?? 0;
           const id = sectionId(chapterIndex, sectionIndex);
-          const title = chapters[chapterIndex].sections[sectionIndex];
+          const chapter = currentChapters[chapterIndex];
+          const title = chapter ? chapter.sections[sectionIndex] : "";
           const saved = bookmarkedSections.has(id);
 
           return (
@@ -683,14 +802,14 @@ function BookContent({
                   <button
                     className={`section-bookmark ${saved ? "saved" : ""}`}
                     type="button"
-                    aria-label={saved ? `Remove bookmark for ${title}` : `Bookmark ${title}`}
+                    aria-label={saved ? `${t.removeBookmark}: ${title}` : `${t.bookmarkCurrent}: ${title}`}
                     aria-pressed={saved}
                     onClick={() => onBookmark(id)}
                   >
                     <Bookmark size={16} aria-hidden="true" />
                   </button>
                 </div>
-                <TextGroupContent group={segment} />
+                <TextGroupContent group={segment} language={language} />
               </div>
             </section>
           );
@@ -713,7 +832,7 @@ function BookContent({
             id={groupId}
             key={`${segment.kind}-${index}`}
           >
-            <TextGroupContent group={segment} />
+            <TextGroupContent group={segment} language={language} />
           </section>
         );
       })}
@@ -721,17 +840,18 @@ function BookContent({
         <span className="complete-mark" aria-hidden="true">
           <Check size={28} />
         </span>
-        <span className="eyebrow">BOOK COMPLETE</span>
+        <span className="eyebrow">{t.bookComplete}</span>
         <h2 id="book-complete-heading">
-          May the Qur&apos;an remain
-          <br />a light in your heart.
+          {t.completeHeading.split("\n").map((line, i) => (
+            <span key={i}>
+              {line}
+              {i === 0 && <br />}
+            </span>
+          ))}
         </h2>
-        <p>
-          You have reached the end of this reading edition. Return often to review, reflect,
-          and renew your intention.
-        </p>
+        <p>{t.completeDesc}</p>
         <button className="button button-green" type="button" onClick={onBeginAgain}>
-          Begin again <ChevronUp size={16} aria-hidden="true" />
+          {t.beginAgain} <ChevronUp size={16} aria-hidden="true" />
         </button>
       </section>
     </article>
@@ -748,6 +868,7 @@ function BookToolbar({
   onTheme,
   spacingStep,
   theme,
+  t,
 }: {
   fontSize: number;
   onFontChange: (delta: number) => void;
@@ -758,11 +879,12 @@ function BookToolbar({
   onTheme: () => void;
   spacingStep: number;
   theme: Theme;
+  t: (typeof uiTranslations)["en"];
 }) {
   return (
     <div className="reader-toolbar" aria-label="Reader controls">
       <div className="font-controls">
-        <span className="eyebrow">Text</span>
+        <span className="eyebrow">{t.toolbarText}</span>
         <button
           className="text-control"
           type="button"
@@ -790,12 +912,12 @@ function BookToolbar({
         aria-label="Adjust paragraph spacing"
         onClick={onSpacing}
         aria-pressed={spacingStep !== 0}
-        title={`Paragraph spacing: ${["default", "wide", "compact"][spacingStep]}`}
+        title={`${t.toolbarSpacing}: ${t.spacingLevels[spacingStep]}`}
       >
         <span className="spacing-glyph" aria-hidden="true">
           ≡
         </span>
-        <span>Spacing</span>
+        <span>{t.toolbarSpacing}</span>
       </button>
       <button
         className="tool-button"
@@ -808,41 +930,41 @@ function BookToolbar({
         ) : (
           <Moon size={16} aria-hidden="true" />
         )}
-        <span>{theme === "dark" ? "Light" : "Focus"}</span>
+        <span>{theme === "dark" ? t.themeLight : t.themeFocus}</span>
       </button>
       <button
         className="tool-button"
         type="button"
-        aria-label="Bookmark current section"
+        aria-label={t.bookmarkCurrent}
         onClick={onBookmark}
       >
         <Bookmark size={16} aria-hidden="true" />
-        <span>Save</span>
+        <span>{t.save}</span>
       </button>
-      <button className="tool-button" type="button" onClick={onNote} aria-label="Add a note">
+      <button className="tool-button" type="button" onClick={onNote} aria-label={t.note}>
         <FileText size={16} aria-hidden="true" />
-        <span>Note</span>
+        <span>{t.note}</span>
       </button>
-      <button className="tool-button" type="button" onClick={onSearch} aria-label="Find in book">
+      <button className="tool-button" type="button" onClick={onSearch} aria-label={t.find}>
         <Search size={16} aria-hidden="true" />
-        <span>Find</span>
+        <span>{t.find}</span>
       </button>
     </div>
   );
 }
 
 function Hero({
-  progress,
   onNavigate,
   currentSection,
-  currentChapter,
   currentSectionId,
+  language,
+  t,
 }: {
-  progress: number;
   onNavigate: (target: string, navigationId?: NavigationId) => void;
   currentSection: string;
-  currentChapter: number;
   currentSectionId: string;
+  language: Language;
+  t: (typeof uiTranslations)["en"];
 }) {
   return (
     <section className="welcome" id="home">
@@ -850,18 +972,18 @@ function Hero({
       <div className="welcome-copy">
         <p className="hero-kicker">
           <span aria-hidden="true" />
-          A guided path to memorization
+          {t.heroKicker}
         </p>
         <h1 lang="ar" dir="rtl">
-          أسهل طريقة لحفظ
-          <br />
-          القرآن الكريم
+          {t.heroArabicTitle.split("\n").map((line, idx) => (
+            <span key={idx}>
+              {line}
+              {idx === 0 && <br />}
+            </span>
+          ))}
         </h1>
-        <h2>The Easiest Method for Memorizing the Noble Qur&apos;an</h2>
-        <p className="hero-description">
-          A practical, structured companion for learning, memorizing, and preserving the words of
-          Allah with consistency and reverence.
-        </p>
+        {language === "en" && <h2>{t.heroEnglishTitle}</h2>}
+        <p className="hero-description">{t.heroDesc}</p>
         <div className="hero-actions">
           <a
             className="button button-gold"
@@ -871,194 +993,124 @@ function Hero({
               onNavigate("reader", "reader");
             }}
           >
-            Start reading <ArrowRight size={17} aria-hidden="true" />
+            {t.startReading}
+            <ArrowRight
+              size={17}
+              className={language === "ar" ? "rtl-flip" : ""}
+              aria-hidden="true"
+            />
           </a>
           <a
             className="button button-quiet"
-            href="#contents"
+            href="#chapter-1"
             onClick={(event) => {
               event.preventDefault();
-              onNavigate("contents", "contents");
+              onNavigate("chapter-1", "reader");
             }}
           >
             <List size={16} aria-hidden="true" />
-            View contents
+            {t.bookContentsBtn}
           </a>
         </div>
       </div>
       <a
         className="journey-card"
         href="#reader"
-        aria-label={`Continue your journey from ${currentSection}`}
+        aria-label={`${t.continueReading} - ${currentSection}`}
         onClick={(event) => {
           event.preventDefault();
           const target = document.getElementById(currentSectionId);
           target?.scrollIntoView({ behavior: "smooth", block: "start" });
         }}
       >
-        <span
-          className="journey-ring"
-          style={{ "--progress-angle": `${progress * 3.6}deg` } as CSSProperties}
-          role="img"
-          aria-label={`${progress}% complete`}
-        >
-          <span>{progress}%</span>
-        </span>
         <span className="journey-copy">
-          <span className="eyebrow">Your journey</span>
-          <strong>Chapter {currentChapter + 1} of 5</strong>
-          <span>
-            Continue from <u>{currentSection}</u>
-          </span>
+          <span className="eyebrow">{t.continueReading}</span>
+          <strong>{currentSection}</strong>
+          <span>{t.returnToSection}</span>
         </span>
+        <ArrowRight
+          size={18}
+          className={language === "ar" ? "rtl-flip" : ""}
+          aria-hidden="true"
+        />
       </a>
     </section>
   );
 }
 
 function LearningSpace({
-  activeChapterIndex,
   bookmarks,
-  chapterStatuses,
-  completedChapterCount,
   notes,
-  progress,
+  language,
   onAddNote,
+  onDeleteNote,
   onNavigate,
+  onViewNote,
+  t,
 }: {
-  activeChapterIndex: number;
   bookmarks: SavedPassage[];
-  chapterStatuses: string[];
-  completedChapterCount: number;
   notes: ReadingNote[];
-  progress: number;
+  language: Language;
   onAddNote: () => void;
+  onDeleteNote: (index: number) => void;
   onNavigate: (target: string, navigationId?: NavigationId) => void;
+  onViewNote: (note: ReadingNote) => void;
+  t: (typeof uiTranslations)["en"];
 }) {
   return (
     <section className="student-section" aria-labelledby="learning-heading">
       <div className="learning-inner">
         <div className="learning-heading">
           <div>
-            <p className="eyebrow">Your learning space</p>
-            <h2 id="learning-heading">Continue your journey</h2>
-            <p>Small, consistent steps build a lasting relationship with the Qur&apos;an.</p>
+            <p className="eyebrow">{t.learningSpaceEyebrow}</p>
+            <h2 id="learning-heading">{t.learningSpaceHeading}</h2>
+            <p>{t.learningSpaceDesc}</p>
           </div>
-          <a
-            className="outline-button"
-            href="#progress"
-            onClick={(event) => {
-              event.preventDefault();
-              onNavigate("progress", "progress");
-            }}
-          >
-            View full progress <ArrowRight size={17} aria-hidden="true" />
-          </a>
         </div>
         <div className="learning-grid">
-          <section className="learning-card progress-card" id="progress">
-            <div className="progress-card-heading">
-              <div>
-                <p className="eyebrow">Overall progress</p>
-                <strong className="progress-number">{progress}%</strong>
-              </div>
-              <span
-                className="large-progress-ring"
-                style={{ "--progress-angle": `${progress * 3.6}deg` } as CSSProperties}
-                role="img"
-                aria-label={`${progress}% complete`}
-              >
-                {progress}%
-              </span>
-            </div>
-            <div
-              className="progress-track"
-              role="progressbar"
-              aria-label="Overall reading progress"
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={progress}
-            >
-              <span style={{ width: `${progress}%` }} />
-            </div>
-            <div className="reading-stats">
-              <span>
-                <BookOpen size={16} aria-hidden="true" />
-                {completedChapterCount} of 5 chapters
-              </span>
-              <span>
-                <Clock3 size={16} aria-hidden="true" />
-                42 min read
-              </span>
-            </div>
-            <div className="chapter-progress-list">
-              {chapters.map((chapter, chapterIndex) => {
-                const state = chapterStatuses[chapterIndex];
-                const isCompleted = state === "Completed";
-                const isCurrent =
-                  chapterIndex === activeChapterIndex &&
-                  state.startsWith("In progress");
-                const isSelected = chapterIndex === activeChapterIndex;
-                return (
-                  <button
-                    type="button"
-                    className={`chapter-progress-item${isCompleted ? " is-completed" : ""}${isCurrent ? " is-current" : ""}${isSelected ? " is-selected" : ""}`}
-                    key={chapter.title}
-                    onClick={() => onNavigate(`chapter-${chapterIndex + 1}`, "reader")}
-                    aria-current={isSelected ? "step" : undefined}
-                  >
-                    <span className="chapter-progress-number">
-                      {isCompleted ? (
-                        <span className="chapter-completed-icon" role="img" aria-label="Completed">
-                          <Check size={14} aria-hidden="true" />
-                        </span>
-                      ) : (
-                        chapterIndex + 1
-                      )}
-                    </span>
-                    <span className="chapter-progress-copy">
-                      <strong>{chapter.title}</strong>
-                      <small>{state}</small>
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </section>
-
           <div className="learning-stack">
             <section className="learning-card" id="bookmarks">
               <div className="card-title-row">
                 <h3>
                   <Bookmark size={18} aria-hidden="true" />
-                  Saved bookmarks
+                  {t.savedBookmarksHeading}
                 </h3>
                 <button
                   className="text-button"
                   type="button"
                   onClick={() => onNavigate("bookmarks", "bookmarks")}
                 >
-                  View all
+                  {t.viewAll}
                 </button>
               </div>
               <div className="saved-list">
                 {bookmarks.length === 0 ? (
-                  <p className="empty-state">Your saved passages will appear here.</p>
+                  <p className="empty-state">{t.emptyBookmarks}</p>
                 ) : (
-                  bookmarks.map((item) => (
-                    <button
-                      className="saved-row"
-                      type="button"
-                      key={item.sectionId}
-                      onClick={() => onNavigate(item.sectionId, "reader")}
-                    >
-                      <span>
-                        <strong>{item.title}</strong>
-                        <small>{item.chapter}</small>
-                      </span>
-                      <ChevronRight size={16} aria-hidden="true" />
-                    </button>
-                  ))
+                  bookmarks.map((item) => {
+                    const meta = getSectionMetadata(item.sectionId, language);
+                    const displayTitle = meta ? meta.title : item.title;
+                    const displayChapter = meta ? meta.chapter : item.chapter;
+
+                    return (
+                      <button
+                        className="saved-row"
+                        type="button"
+                        key={item.sectionId}
+                        onClick={() => onNavigate(item.sectionId, "reader")}
+                      >
+                        <span>
+                          <strong>{displayTitle}</strong>
+                          <small>{displayChapter}</small>
+                        </span>
+                        <ChevronRight
+                          size={16}
+                          className={language === "ar" ? "rtl-flip" : ""}
+                          aria-hidden="true"
+                        />
+                      </button>
+                    );
+                  })
                 )}
               </div>
             </section>
@@ -1066,32 +1118,48 @@ function LearningSpace({
               <div className="card-title-row">
                 <h3>
                   <FileText size={18} aria-hidden="true" />
-                  Personal notes
+                  {t.personalNotesHeading}
                 </h3>
                 <button
                   className="text-button"
                   type="button"
-                  aria-label="Add note"
+                  aria-label={t.addNoteBtn}
                   onClick={onAddNote}
                 >
-                  + Add note
+                  {t.addNoteBtn}
                 </button>
               </div>
               <div className="saved-list notes-list">
                 {notes.length === 0 ? (
-                  <p className="empty-state">Your reflections will appear here.</p>
+                  <p className="empty-state">{t.emptyNotes}</p>
                 ) : (
-                  notes.map((note, index) => (
-                    <button
-                      className="note-row"
-                      type="button"
-                      key={`${note.sectionId}-${index}`}
-                      onClick={() => onNavigate(note.sectionId, "reader")}
-                    >
-                      <span className="note-label">{note.title}</span>
-                      <span className="note-description">{note.text}</span>
-                    </button>
-                  ))
+                  notes.map((note, index) => {
+                    const meta = getSectionMetadata(note.sectionId, language);
+                    const displayTitle = meta ? meta.title : note.title;
+
+                    return (
+                      <div className="note-entry" key={`${note.sectionId}-${index}`}>
+                        <button
+                          className="note-row"
+                          type="button"
+                          onClick={() => onViewNote(note)}
+                          aria-label={`View note: ${displayTitle}`}
+                        >
+                          <span className="note-label">{displayTitle}</span>
+                          <span className="note-description">{note.text}</span>
+                        </button>
+                        <button
+                          className="note-delete"
+                          type="button"
+                          onClick={() => onDeleteNote(index)}
+                          aria-label={`Delete note: ${displayTitle}`}
+                          title={t.deleteNote}
+                        >
+                          <Trash2 size={15} aria-hidden="true" />
+                        </button>
+                      </div>
+                    );
+                  })
                 )}
               </div>
             </section>
@@ -1103,17 +1171,21 @@ function LearningSpace({
 }
 
 function SearchDialog({
+  language,
   onClose,
   onNavigate,
   onQueryChange,
   query,
   results,
+  t,
 }: {
+  language: Language;
   onClose: () => void;
   onNavigate: (target: string, navigationId?: NavigationId) => void;
   onQueryChange: (query: string) => void;
   query: string;
   results: SearchResult[];
+  t: (typeof uiTranslations)["en"];
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -1133,7 +1205,8 @@ function SearchDialog({
         className="search-dialog"
         role="dialog"
         aria-modal="true"
-        aria-label="Search the book"
+        aria-label={t.searchDialogAria}
+        dir={language === "ar" ? "rtl" : "ltr"}
       >
         <div className="search-input-wrap">
           <Search size={19} aria-hidden="true" />
@@ -1142,8 +1215,9 @@ function SearchDialog({
             type="search"
             value={query}
             onChange={(event) => onQueryChange(event.target.value)}
-            placeholder="Search chapters, passages, and topics…"
+            placeholder={t.searchDialogPlaceholder}
             autoComplete="off"
+            dir={language === "ar" ? "rtl" : "ltr"}
           />
           <button className="escape-key" type="button" onClick={onClose}>
             Esc
@@ -1152,9 +1226,9 @@ function SearchDialog({
         <div className="search-results">
           {!query.trim() ? (
             <>
-              <p className="eyebrow">Try searching for</p>
+              <p className="eyebrow">{t.trySearchingFor}</p>
               <div className="search-suggestions">
-                {suggestions.map((suggestion) => (
+                {t.suggestions.map((suggestion) => (
                   <button
                     key={suggestion}
                     type="button"
@@ -1181,11 +1255,15 @@ function SearchDialog({
                   <small>{result.chapter}</small>
                   <span className="search-excerpt">{result.excerpt}</span>
                 </span>
-                <ArrowRight size={16} aria-hidden="true" />
+                <ArrowRight
+                  size={16}
+                  className={language === "ar" ? "rtl-flip" : ""}
+                  aria-hidden="true"
+                />
               </button>
             ))
           ) : (
-            <p className="search-empty">No matching sections. Try another word.</p>
+            <p className="search-empty">{t.noResults}</p>
           )}
         </div>
       </section>
@@ -1195,12 +1273,16 @@ function SearchDialog({
 
 function NoteDialog({
   currentSection,
+  language,
   onClose,
   onSave,
+  t,
 }: {
   currentSection: string;
+  language: Language;
   onClose: () => void;
   onSave: (text: string) => void;
+  t: (typeof uiTranslations)["en"];
 }) {
   const [text, setText] = useState("");
   const [error, setError] = useState(false);
@@ -1233,23 +1315,24 @@ function NoteDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="note-dialog-title"
+        dir={language === "ar" ? "rtl" : "ltr"}
       >
         <div className="dialog-heading">
           <div>
-            <p className="eyebrow">Personal note</p>
+            <p className="eyebrow">{t.noteDialogEyebrow}</p>
             <h2 id="note-dialog-title">{currentSection}</h2>
           </div>
           <button
             className="header-icon dialog-close"
             type="button"
             onClick={onClose}
-            aria-label="Close note editor"
+            aria-label={t.close}
           >
             <X size={18} aria-hidden="true" />
           </button>
         </div>
         <label className="sr-only" htmlFor="note-input">
-          Write a reflection or reminder for this section
+          {t.notePlaceholder}
         </label>
         <textarea
           id="note-input"
@@ -1259,20 +1342,21 @@ function NoteDialog({
             setText(event.target.value);
             if (event.target.value.trim()) setError(false);
           }}
-          placeholder="Write a reflection or reminder for this section…"
+          placeholder={t.notePlaceholder}
           aria-describedby={error ? "note-error" : undefined}
+          dir={language === "ar" ? "rtl" : "ltr"}
         />
         {error && (
           <p className="form-error" id="note-error" role="alert">
-            Please write a note before saving.
+            {t.noteError}
           </p>
         )}
         <div className="dialog-actions">
           <button className="button button-quiet" type="button" onClick={onClose}>
-            Cancel
+            {t.cancel}
           </button>
           <button className="button button-green" type="button" onClick={save}>
-            Save note
+            {t.saveNote}
           </button>
         </div>
       </section>
@@ -1280,59 +1364,70 @@ function NoteDialog({
   );
 }
 
-function PreviewBar() {
-  const [visible, setVisible] = useState(true);
-  const [menuOpen, setMenuOpen] = useState(false);
-
-  if (!visible) return null;
+function NoteViewer({
+  note,
+  language,
+  onClose,
+  onDelete,
+  t,
+}: {
+  note: ReadingNote;
+  language: Language;
+  onClose: () => void;
+  onDelete: () => void;
+  t: (typeof uiTranslations)["en"];
+}) {
+  const meta = getSectionMetadata(note.sectionId, language);
+  const displayTitle = meta ? meta.title : note.title;
 
   return (
-    <aside className="figma-preview" aria-label="Figma Make preview controls">
-      <Sparkles size={16} aria-hidden="true" />
-      <strong>Created with Figma Make</strong>
-      <a
-        className="remix-button"
-        href="https://guard-geo-18796015.figma.site/"
-        target="_blank"
-        rel="noreferrer"
+    <div
+      className="overlay"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section
+        className="note-dialog note-viewer"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="saved-note-title"
+        dir={language === "ar" ? "rtl" : "ltr"}
       >
-        Remix
-      </a>
-      <button
-        className="preview-more"
-        type="button"
-        aria-label="More preview options"
-        aria-expanded={menuOpen}
-        onClick={() => setMenuOpen((open) => !open)}
-      >
-        <MoreHorizontal size={17} aria-hidden="true" />
-      </button>
-      <button
-        className="preview-close"
-        type="button"
-        aria-label="Close preview bar"
-        onClick={() => setVisible(false)}
-      >
-        <X size={16} aria-hidden="true" />
-      </button>
-      {menuOpen && (
-        <div className="preview-menu">
-          <a
-            href="https://guard-geo-18796015.figma.site/"
-            target="_blank"
-            rel="noreferrer"
+        <div className="dialog-heading">
+          <div>
+            <p className="eyebrow">{t.savedNoteEyebrow}</p>
+            <h2 id="saved-note-title">{displayTitle}</h2>
+          </div>
+          <button
+            className="header-icon dialog-close"
+            type="button"
+            onClick={onClose}
+            aria-label={t.close}
           >
-            Open the published design
-          </a>
+            <X size={18} aria-hidden="true" />
+          </button>
         </div>
-      )}
-    </aside>
+        <p className="saved-note-content" dir="auto">{note.text}</p>
+        <div className="dialog-actions">
+          <button className="button button-quiet" type="button" onClick={onClose}>
+            {t.close}
+          </button>
+          <button className="button button-danger" type="button" onClick={onDelete}>
+            <Trash2 size={15} aria-hidden="true" />
+            {t.deleteNote}
+          </button>
+        </div>
+      </section>
+    </div>
   );
 }
 
 function getSearchResults(
   query: string,
   segments: BookSegment[],
+  currentChapters: ChapterDefinition[],
 ): SearchResult[] {
   const normalized = query.trim().toLocaleLowerCase();
   if (!normalized) return [];
@@ -1349,11 +1444,14 @@ function getSearchResults(
 
   for (const segment of segments) {
     if (segment.type === "chapter") {
-      const chapter = chapters[segment.chapterIndex];
-      if (`${chapter.title} ${chapter.subtitle}`.toLocaleLowerCase().includes(normalized)) {
+      const chapter = currentChapters[segment.chapterIndex];
+      if (
+        chapter &&
+        `${chapter.title} ${chapter.subtitle}`.toLocaleLowerCase().includes(normalized)
+      ) {
         addResult({
           title: chapter.title,
-          chapter: `Chapter ${segment.chapterIndex + 1}`,
+          chapter: chapter.title,
           excerpt: chapter.subtitle,
           id: `chapter-${segment.chapterIndex + 1}`,
         });
@@ -1364,7 +1462,9 @@ function getSearchResults(
     if (segment.kind === "section") {
       const chapterIndex = segment.chapterIndex ?? 0;
       const sectionIndex = segment.sectionIndex ?? 0;
-      const title = chapters[chapterIndex].sections[sectionIndex];
+      const chapter = currentChapters[chapterIndex];
+      if (!chapter) continue;
+      const title = chapter.sections[sectionIndex] ?? "";
       const content = `${title} ${segment.paragraphs
         .map((paragraph) => paragraph.text)
         .join(" ")}`;
@@ -1375,7 +1475,7 @@ function getSearchResults(
           )?.text ?? title;
         addResult({
           title,
-          chapter: chapters[chapterIndex].title,
+          chapter: chapter.title,
           excerpt,
           id: sectionId(chapterIndex, sectionIndex),
         });
@@ -1391,17 +1491,21 @@ function getSearchResults(
           : segment.kind === "chapter-intro"
             ? `chapter-${(segment.chapterIndex ?? 0) + 1}`
             : "book-introduction";
+      const chapter =
+        segment.chapterIndex !== undefined
+          ? currentChapters[segment.chapterIndex]
+          : undefined;
       addResult({
         title:
-          segment.kind === "chapter-intro"
-            ? chapters[segment.chapterIndex ?? 0].title
+          chapter
+            ? chapter.title
             : paragraph.kind === "subheading"
               ? paragraph.text
               : "Introduction",
         chapter:
-          segment.kind === "chapter-intro"
-            ? chapters[segment.chapterIndex ?? 0].title
-            : "The Easiest Method for Memorizing the Noble Qur'an",
+          chapter
+            ? chapter.title
+            : currentChapters[0]?.title ?? "Introduction",
         excerpt: paragraph.text,
         id,
       });
@@ -1412,91 +1516,143 @@ function getSearchResults(
 }
 
 function App() {
-  const segments = useMemo(() => buildBookSegments(), []);
+  const [language, setLanguage] = useState<Language>(loadLanguage);
+  const t = uiTranslations[language];
+  const currentChapters = useMemo(() => getChapters(language), [language]);
+  const segments = useMemo(() => buildBookSegments(language), [language]);
+
   const [theme, setTheme] = useState<Theme>(loadTheme);
   const [fontSize, setFontSize] = useState(18);
   const [spacingStep, setSpacingStep] = useState(0);
   const [bookmarks, setBookmarks] = useState<SavedPassage[]>(loadSavedPassages);
   const [notes, setNotes] = useState<ReadingNote[]>(loadReadingNotes);
+  const [readingActivity, setReadingActivity] = useState<string[]>(loadReadingActivity);
   const [activeSectionId, setActiveSectionId] = useState(sectionId(0, 0));
-  const [visitedSections, setVisitedSections] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const [completedChapters, setCompletedChapters] = useState<Set<number>>(
-    () => new Set([0]),
-  );
-  const [hasStartedReading, setHasStartedReading] = useState(false);
-  const [scrollProgress, setScrollProgress] = useState(0);
+  const [showBackToTop, setShowBackToTop] = useState(false);
   const [activeNavigation, setActiveNavigation] = useState<NavigationId>("reader");
-  const [expandedChapters, setExpandedChapters] = useState<number[]>([0]);
+  const [bookContentsOpen, setBookContentsOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [noteOpen, setNoteOpen] = useState(false);
   const [noteContext, setNoteContext] = useState(sectionId(0, 0));
+  const [viewingNote, setViewingNote] = useState<{
+    note: ReadingNote;
+    index: number;
+  } | null>(null);
   const searchTriggerRef = useRef<HTMLButtonElement>(null);
-  const resettingProgressRef = useRef(false);
 
   const currentReference = useMemo(() => {
-    for (const [chapterIndex, chapter] of chapters.entries()) {
+    for (const [chapterIndex, chapter] of currentChapters.entries()) {
       for (const [sectionIndex, title] of chapter.sections.entries()) {
         if (sectionId(chapterIndex, sectionIndex) === activeSectionId) {
           return { chapterIndex, sectionIndex, title };
         }
       }
     }
-    return { chapterIndex: 0, sectionIndex: 0, title: chapters[0].sections[0] };
-  }, [activeSectionId]);
+    return {
+      chapterIndex: 0,
+      sectionIndex: 0,
+      title: currentChapters[0]?.sections[0] ?? "",
+    };
+  }, [activeSectionId, currentChapters]);
 
-  const readingProgress = hasStartedReading
-    ? 18 + Math.round((visitedSections.size / sectionCount) * 82)
-    : 18;
-  const chapterStatuses = chapters.map((chapter, chapterIndex) => {
-    if (!hasStartedReading) {
-      if (chapterIndex === 0) return "Completed";
-      if (chapterIndex === 1) return "In progress · 36%";
-      return "Not started";
-    }
-
-    const visitedCount = chapter.sections.filter((_, sectionIndex) =>
-      visitedSections.has(sectionId(chapterIndex, sectionIndex)),
-    ).length;
-    if (
-      completedChapters.has(chapterIndex) ||
-      visitedCount === chapter.sections.length
-    ) {
-      return "Completed";
-    }
-
-    const currentSectionIsVisited = visitedSections.has(
-      sectionId(chapterIndex, currentReference.sectionIndex),
-    );
-    const currentCount =
-      chapterIndex === currentReference.chapterIndex
-        ? visitedCount + (currentSectionIsVisited ? 0 : 1)
-        : visitedCount;
-    if (currentCount > 0) {
-      const percent = Math.round((currentCount / chapter.sections.length) * 100);
-      return `In progress · ${percent}%`;
-    }
-    return "Not started";
-  });
-  const dashboardActiveChapterIndex = hasStartedReading
-    ? currentReference.chapterIndex
-    : 1;
   const bookmarkedSections = useMemo(
     () => new Set(bookmarks.map((bookmark) => bookmark.sectionId)),
     [bookmarks],
   );
+
   const searchResults = useMemo(
-    () => getSearchResults(searchQuery, segments),
-    [searchQuery, segments],
+    () => getSearchResults(searchQuery, segments, currentChapters),
+    [searchQuery, segments, currentChapters],
   );
+
+  const daysReadThisWeek = useMemo(() => {
+    const weekDates = getCurrentWeekDates();
+    return readingActivity.filter((d) => weekDates.includes(d)).length;
+  }, [readingActivity]);
+
+  const goalInfo = useMemo(
+    () => getWeeklyGoalInfo(daysReadThisWeek, language),
+    [daysReadThisWeek, language],
+  );
+
   const readerStyle = {
     "--book-font-size": `${fontSize}px`,
     "--reader-line-height": lineHeightSteps[spacingStep],
   } as CSSProperties;
+
+  // Actual reading engagement tracker
+  // Requires 15 continuous seconds of focused reading.
+  // Conditions that must simultaneously hold:
+  // 1. Browser tab is visible (document.visibilityState === "visible")
+  // 2. Browser tab has focus (document.hasFocus())
+  // 3. Reader container (#reader) is currently visible in the viewport
+  // If ANY of these conditions ceases to be true, the continuous counter resets to 0.
+  useEffect(() => {
+    const today = getTodayString();
+    if (readingActivity.includes(today)) {
+      return;
+    }
+
+    let continuousSeconds = 0;
+    const REQUIRED_CONTINUOUS_SECONDS = 15;
+
+    const checkConditions = (): boolean => {
+      if (document.visibilityState !== "visible") return false;
+      if (!document.hasFocus()) return false;
+      const readerElement = document.getElementById("reader");
+      if (!readerElement) return false;
+      const rect = readerElement.getBoundingClientRect();
+      return rect.top < window.innerHeight && rect.bottom > 60;
+    };
+
+    const resetCounter = () => {
+      continuousSeconds = 0;
+    };
+
+    const interval = window.setInterval(() => {
+      if (checkConditions()) {
+        continuousSeconds += 1;
+        if (continuousSeconds >= REQUIRED_CONTINUOUS_SECONDS) {
+          setReadingActivity((prev) => (prev.includes(today) ? prev : [...prev, today]));
+          window.clearInterval(interval);
+        }
+      } else {
+        continuousSeconds = 0;
+      }
+    }, 1000);
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== "visible") {
+        resetCounter();
+      }
+    };
+
+    const onBlur = () => {
+      resetCounter();
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("blur", onBlur);
+
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [readingActivity]);
+
+  useEffect(() => {
+    document.documentElement.lang = language;
+    document.documentElement.dir = language === "ar" ? "rtl" : "ltr";
+    try {
+      localStorage.setItem("quran-language", language);
+    } catch (error) {
+      console.warn("Could not save the selected language to local storage.", error);
+    }
+  }, [language]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -1524,6 +1680,14 @@ function App() {
   }, [notes]);
 
   useEffect(() => {
+    try {
+      localStorage.setItem("quran-reading-activity", JSON.stringify(readingActivity));
+    } catch (error) {
+      console.warn("Could not save reading activity to local storage.", error);
+    }
+  }, [readingActivity]);
+
+  useEffect(() => {
     const media = window.matchMedia("(max-width: 900px)");
     const updateLayout = () => setIsMobile(media.matches);
     updateLayout();
@@ -1541,22 +1705,13 @@ function App() {
   }, [drawerOpen, isMobile]);
 
   useEffect(() => {
-    const updateProgress = () => {
-      const scrollable =
-        document.documentElement.scrollHeight - window.innerHeight;
-      const progress =
-        scrollable <= 0
-          ? 0
-          : Math.min(100, Math.round((window.scrollY / scrollable) * 100));
-      setScrollProgress(progress);
-    };
+    const updateBackToTopVisibility = () =>
+      setShowBackToTop(window.scrollY > 2);
 
-    updateProgress();
-    window.addEventListener("scroll", updateProgress, { passive: true });
-    window.addEventListener("resize", updateProgress);
+    updateBackToTopVisibility();
+    window.addEventListener("scroll", updateBackToTopVisibility, { passive: true });
     return () => {
-      window.removeEventListener("scroll", updateProgress);
-      window.removeEventListener("resize", updateProgress);
+      window.removeEventListener("scroll", updateBackToTopVisibility);
     };
   }, []);
 
@@ -1566,7 +1721,6 @@ function App() {
 
     const observer = new IntersectionObserver(
       (entries) => {
-        if (resettingProgressRef.current) return;
         const visible = entries
           .filter((entry) => entry.isIntersecting)
           .sort(
@@ -1579,7 +1733,6 @@ function App() {
         const nextId = target.id;
         const chapterIndex = Number(target.dataset.chapterIndex);
         if (!nextId || Number.isNaN(chapterIndex)) return;
-        setHasStartedReading(true);
         setActiveSectionId(nextId);
         setActiveNavigation("reader");
       },
@@ -1591,35 +1744,6 @@ function App() {
   }, [segments]);
 
   useEffect(() => {
-    if (!hasStartedReading || resettingProgressRef.current) return;
-    const sectionToMark = activeSectionId;
-    const timeoutId = window.setTimeout(() => {
-      if (resettingProgressRef.current) return;
-      setVisitedSections((previous) => {
-        if (previous.has(sectionToMark)) return previous;
-        return new Set(previous).add(sectionToMark);
-      });
-    }, 1200);
-    return () => window.clearTimeout(timeoutId);
-  }, [activeSectionId, hasStartedReading]);
-
-  useEffect(() => {
-    setCompletedChapters((previous) => {
-      const next = new Set(previous);
-      chapters.forEach((chapter, chapterIndex) => {
-        if (
-          chapter.sections.every((_, sectionIndex) =>
-            visitedSections.has(sectionId(chapterIndex, sectionIndex)),
-          )
-        ) {
-          next.add(chapterIndex);
-        }
-      });
-      return next.size === previous.size ? previous : next;
-    });
-  }, [visitedSections]);
-
-  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
@@ -1627,15 +1751,32 @@ function App() {
         setSearchOpen(true);
       }
       if (event.key === "Escape") {
+        if (bookContentsOpen) {
+          closeBookContents();
+          return;
+        }
         setDrawerOpen(false);
         setSearchOpen(false);
         setNoteOpen(false);
+        setViewingNote(null);
       }
     };
 
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [bookContentsOpen]);
+
+  function toggleLanguage() {
+    const nextLang: Language = language === "en" ? "ar" : "en";
+    setLanguage(nextLang);
+    // Maintain active section after re-rendering in the other language
+    setTimeout(() => {
+      const element = document.getElementById(activeSectionId);
+      if (element) {
+        element.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }, 60);
+  }
 
   function navigateTo(target: string, navigationId?: NavigationId) {
     let element = document.getElementById(target);
@@ -1644,14 +1785,16 @@ function App() {
       return;
     }
 
-    if (target.startsWith("chapter-")) {
+    if (target.startsWith("chapter-") && !target.includes("section")) {
       const chapterIndex = Number(target.split("-")[1]) - 1;
-      const firstSection = document.getElementById(sectionId(chapterIndex, 0));
-      if (!firstSection) {
-        console.warn(`Could not navigate to the first section of "${target}".`);
-        return;
+      const chapterHeader = document.getElementById(target);
+      if (chapterHeader) {
+        element = chapterHeader;
+      } else {
+        const firstSection = document.getElementById(sectionId(chapterIndex, 0));
+        if (firstSection) element = firstSection;
       }
-      element = firstSection;
+      setActiveSectionId(sectionId(chapterIndex, 0));
     }
 
     element.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -1661,21 +1804,12 @@ function App() {
     const section = element.closest<HTMLElement>("[data-reader-section]");
     if (section) {
       setActiveSectionId(section.id);
-      setHasStartedReading(true);
     }
   }
 
   function toggleBookmark(id: string) {
-    const reference = chapters
-      .flatMap((chapter, chapterIndex) =>
-        chapter.sections.map((title, sectionIndex) => ({
-          title,
-          chapter: chapter.title,
-          id: sectionId(chapterIndex, sectionIndex),
-        })),
-      )
-      .find((section) => section.id === id);
-    if (!reference) {
+    const meta = getSectionMetadata(id, language);
+    if (!meta) {
       console.warn(`Could not bookmark missing reader section "${id}".`);
       return;
     }
@@ -1685,8 +1819,8 @@ function App() {
         ? previous.filter((bookmark) => bookmark.sectionId !== id)
         : [
             {
-              title: reference.title,
-              chapter: reference.chapter,
+              title: meta.title,
+              chapter: meta.chapter,
               sectionId: id,
             },
             ...previous,
@@ -1705,32 +1839,45 @@ function App() {
   }
 
   function saveNote(text: string) {
-    const reference = chapters
-      .flatMap((chapter, chapterIndex) =>
-        chapter.sections.map((title, sectionIndex) => ({
-          title,
-          id: sectionId(chapterIndex, sectionIndex),
-        })),
-      )
-      .find((section) => section.id === noteContext);
-    if (!reference) {
+    const meta = getSectionMetadata(noteContext, language);
+    if (!meta) {
       console.warn(`Could not attach a note to missing reader section "${noteContext}".`);
       return;
     }
 
     setNotes((previous) => [
-      { title: reference.title, text, sectionId: reference.id },
+      { title: meta.title, text, sectionId: noteContext },
       ...previous,
     ]);
     setNoteOpen(false);
   }
 
-  function toggleChapter(chapterIndex: number) {
-    setExpandedChapters((previous) =>
-      previous.includes(chapterIndex)
-        ? previous.filter((index) => index !== chapterIndex)
-        : [...previous, chapterIndex],
-    );
+  function deleteNote(index: number) {
+    if (!window.confirm(t.deleteNoteConfirm)) {
+      return;
+    }
+
+    setNotes((previous) => previous.filter((_, noteIndex) => noteIndex !== index));
+    setViewingNote(null);
+  }
+
+  function closeBookContents() {
+    setBookContentsOpen(false);
+    if (activeNavigation === "contents") {
+      setActiveNavigation("reader");
+    }
+  }
+
+  function toggleBookContents() {
+    setBookContentsOpen((previous) => {
+      const next = !previous;
+      if (!next && activeNavigation === "contents") {
+        setActiveNavigation("reader");
+      } else if (next) {
+        setActiveNavigation("contents");
+      }
+      return next;
+    });
   }
 
   function toggleTheme() {
@@ -1761,35 +1908,30 @@ function App() {
       return;
     }
 
-    resettingProgressRef.current = true;
-    setHasStartedReading(false);
-    setVisitedSections(new Set());
-    setCompletedChapters(new Set([0]));
     setActiveSectionId(sectionId(0, 0));
     setActiveNavigation("reader");
     const previousScrollBehavior = document.documentElement.style.scrollBehavior;
     document.documentElement.style.scrollBehavior = "auto";
     beginning.scrollIntoView({ behavior: "auto", block: "start" });
     document.documentElement.style.scrollBehavior = previousScrollBehavior;
-    window.requestAnimationFrame(() => {
-      resettingProgressRef.current = false;
-    });
   }
 
   const currentBookmarked = bookmarkedSections.has(activeSectionId);
-  const currentNoteSection =
-    chapters[currentReference.chapterIndex].sections[currentReference.sectionIndex];
+  const currentNoteSection = currentReference.title;
+
   return (
     <div className="app-shell">
       <Topbar
-        progress={readingProgress}
         onBookmark={onBookmarkCurrent}
         onSearch={openSearch}
         onTheme={toggleTheme}
         onMenu={() => setDrawerOpen(true)}
+        onToggleLanguage={toggleLanguage}
         mobile={isMobile}
         bookmarked={currentBookmarked}
         searchTriggerRef={searchTriggerRef}
+        language={language}
+        t={t}
       />
       <div className="app-body">
         <Sidebar
@@ -1797,24 +1939,25 @@ function App() {
           activeNavigation={activeNavigation}
           activeSectionId={activeSectionId}
           bookmarks={bookmarks}
-          expandedChapters={expandedChapters}
+          bookContentsOpen={bookContentsOpen}
+          currentChapters={currentChapters}
+          goalInfo={goalInfo}
           isOpen={drawerOpen}
           isMobile={isMobile}
+          language={language}
           onClose={() => setDrawerOpen(false)}
+          onCloseBookContents={closeBookContents}
           onNavigate={navigateTo}
-          onToggleChapter={toggleChapter}
+          onToggleBookContents={toggleBookContents}
+          t={t}
         />
         <main className="main-content">
           <Hero
-            progress={readingProgress}
             onNavigate={navigateTo}
             currentSection={currentReference.title}
-            currentChapter={currentReference.chapterIndex}
             currentSectionId={activeSectionId}
-          />
-          <ChapterNavigation
-            activeChapterIndex={currentReference.chapterIndex}
-            onNavigate={navigateTo}
+            language={language}
+            t={t}
           />
           <section className="reader-layout" id="reader" style={readerStyle}>
             <BookToolbar
@@ -1827,51 +1970,69 @@ function App() {
               onTheme={toggleTheme}
               spacingStep={spacingStep}
               theme={theme}
+              t={t}
             />
             <BookContent
               activeSectionId={activeSectionId}
               bookmarkedSections={bookmarkedSections}
+              currentChapters={currentChapters}
+              language={language}
               onBeginAgain={beginAgain}
               onBookmark={toggleBookmark}
               segments={segments}
+              t={t}
             />
           </section>
           <LearningSpace
-            activeChapterIndex={dashboardActiveChapterIndex}
             bookmarks={bookmarks}
-            chapterStatuses={chapterStatuses}
-            completedChapterCount={completedChapters.size}
             notes={notes}
-            progress={readingProgress}
+            language={language}
             onAddNote={openNote}
+            onDeleteNote={deleteNote}
             onNavigate={navigateTo}
+            onViewNote={(note) =>
+              setViewingNote({ note, index: notes.indexOf(note) })
+            }
+            t={t}
           />
         </main>
       </div>
       <button
-        className={`back-to-top ${scrollProgress > 2 ? "visible" : ""}`}
+        className={`back-to-top ${showBackToTop ? "visible" : ""}`}
         type="button"
-        aria-label="Back to top"
-        title="Back to top"
+        aria-label={t.backToTop}
+        title={t.backToTop}
         onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
       >
         <ArrowUp size={20} aria-hidden="true" />
       </button>
-      <PreviewBar />
       {searchOpen && (
         <SearchDialog
+          language={language}
           onClose={closeSearch}
           onNavigate={navigateTo}
           onQueryChange={setSearchQuery}
           query={searchQuery}
           results={searchResults}
+          t={t}
         />
       )}
       {noteOpen && (
         <NoteDialog
           currentSection={currentNoteSection}
+          language={language}
           onClose={() => setNoteOpen(false)}
           onSave={saveNote}
+          t={t}
+        />
+      )}
+      {viewingNote && (
+        <NoteViewer
+          note={viewingNote.note}
+          language={language}
+          onClose={() => setViewingNote(null)}
+          onDelete={() => deleteNote(viewingNote.index)}
+          t={t}
         />
       )}
     </div>
