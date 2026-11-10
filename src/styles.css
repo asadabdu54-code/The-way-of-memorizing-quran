@@ -868,6 +868,7 @@ button:disabled {
   background: rgb(255 255 255 / 6%);
   backdrop-filter: blur(8px);
   transition: background 160ms ease, border-color 160ms ease;
+  margin-top: 100px;
 }
 
 .journey-card:hover {
@@ -2436,6 +2437,7 @@ button:disabled {
     gap: 19px;
     padding: 20px;
     border-width: 0.64px;
+    margin-top: 50px;
   }
 
   .journey-copy {
