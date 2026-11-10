@@ -1084,10 +1084,10 @@ button:disabled {
 .document-group-frontmatter {
   margin: 21px 0 20px;
   padding: 28px 30px;
-  border: 1px solid #dddcd3;
+  border: 1px solid var(--border);
   border-radius: 3px 18px;
-  background: #fffef9;
-  color: #1d2825;
+  background: var(--page);
+  color: var(--text);
   font-family: "Inter", sans-serif;
   font-size: 16px;
   line-height: 24px;
@@ -1129,9 +1129,9 @@ button:disabled {
 
 .document-group-frontmatter .document-paragraph {
   margin: 12px 0 0;
-  color: #1d2825;
+  color: var(--text);
   font-size: 13px;
-  line-height: 1.8;
+  line-height: var(--reader-line-height);
 }
 
 .document-arabic {
@@ -2073,8 +2073,12 @@ button:disabled {
     width: auto;
     flex: 0 0 auto;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
     margin-left: auto;
+  }
+
+  .lang-selector {
+    margin-right: 4px;
   }
 
   .topbar-actions .header-icon {
@@ -2558,7 +2562,7 @@ button:disabled {
     grid-template-columns: minmax(0, 1fr);
     row-gap: 10px;
     align-items: stretch;
-    margin: 31px 0 21px;
+    margin: 31px 0 36px;
     padding: 30px 27px;
   }
 
