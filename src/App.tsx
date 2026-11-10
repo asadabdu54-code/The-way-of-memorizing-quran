@@ -45,6 +45,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type RefObject,
 } from "react";
+import { SpeedInsights } from "@vercel/speed-insights/react";
 
 type Theme = "light" | "dark";
 type NavigationId =
@@ -1920,7 +1921,9 @@ function App() {
   const currentNoteSection = currentReference.title;
 
   return (
-    <div className="app-shell">
+    <>
+      <SpeedInsights />
+      <div className="app-shell">
       <Topbar
         onBookmark={onBookmarkCurrent}
         onSearch={openSearch}
@@ -2035,7 +2038,8 @@ function App() {
           t={t}
         />
       )}
-    </div>
+      </div>
+    </>
   );
 }
 
