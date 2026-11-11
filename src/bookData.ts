@@ -157,6 +157,8 @@ export function getChapters(lang: Language): ChapterDefinition[] {
   return lang === "ar" ? chaptersAr : chaptersEn;
 }
 
+export const chapterOrder = [2, 3, 0, 1, 4] as const;
+
 export const chapters = chaptersEn;
 
 export interface ContentParagraph {
@@ -397,7 +399,33 @@ export function buildBookSegments(lang: Language = "en"): BookSegment[] {
   }
 
   flush();
-  return segments;
+
+  const segmentsByChapter = new Map<number, BookSegment[]>();
+  const openingSegments: BookSegment[] = [];
+  const appendixSegments: BookSegment[] = [];
+
+  for (const segment of segments) {
+    const segmentChapterIndex =
+      segment.type === "chapter" ? segment.chapterIndex : segment.chapterIndex;
+
+    if (segmentChapterIndex !== undefined) {
+      const chapterSegments = segmentsByChapter.get(segmentChapterIndex) ?? [];
+      chapterSegments.push(segment);
+      segmentsByChapter.set(segmentChapterIndex, chapterSegments);
+    } else if (segment.type === "text" && segment.kind === "appendix") {
+      appendixSegments.push(segment);
+    } else {
+      openingSegments.push(segment);
+    }
+  }
+
+  return [
+    ...openingSegments,
+    ...chapterOrder.flatMap(
+      (chapterIndex) => segmentsByChapter.get(chapterIndex) ?? [],
+    ),
+    ...appendixSegments,
+  ];
 }
 
 export function sectionId(chapterIndex: number, sectionIndex: number): string {

@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import {
   buildBookSegments,
+  chapterOrder,
   chaptersEn,
   getChapters,
   getSectionMetadata,
@@ -99,6 +100,13 @@ const navigationConfig: NavigationItemConfig[] = [
 ];
 
 const lineHeightSteps = [1.9, 2.1, 1.7];
+
+function getOrderedChapterDisplayIndex(chapterIndex: number): number {
+  const displayIndex = chapterOrder.indexOf(
+    chapterIndex as (typeof chapterOrder)[number],
+  );
+  return displayIndex === -1 ? chapterIndex : displayIndex;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -600,7 +608,10 @@ function Sidebar({
                   onKeyDown={handleContentsKeyDown}
                 >
                   <nav className="toc-dropdown-inner" aria-label="Book chapters and sections">
-                    {currentChapters.map((chapter, chapterIndex) => (
+                    {chapterOrder.map((chapterIndex, displayIndex) => {
+                      const chapter = currentChapters[chapterIndex];
+
+                      return (
                       <div className="toc-chapter" key={`chapter-${chapterIndex}-${chapter.title}`}>
                         <button
                           className={`toc-chapter-title ${chapterIndex === activeChapterIndex ? "current" : ""}`}
@@ -610,7 +621,7 @@ function Sidebar({
                           }
                         >
                           <span className="toc-chapter-index">
-                            {String(chapterIndex + 1).padStart(2, "0")}
+                            {String(displayIndex + 1).padStart(2, "0")}
                           </span>
                           <span>{chapter.title}</span>
                           <ChevronRight
@@ -639,7 +650,8 @@ function Sidebar({
                           })}
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </nav>
                 </div>
               </div>
@@ -685,11 +697,13 @@ function Sidebar({
 
 function ChapterCard({
   chapterIndex,
+  displayIndex,
   currentChapters,
   language,
   t,
 }: {
   chapterIndex: number;
+  displayIndex: number;
   currentChapters: ChapterDefinition[];
   language: Language;
   t: (typeof uiTranslations)["en"];
@@ -704,7 +718,7 @@ function ChapterCard({
     >
       <div className="chapter-number">
         <span className="eyebrow">{t.chapterLabel}</span>
-        <strong>{String(chapterIndex + 1).padStart(2, "0")}</strong>
+        <strong>{String(displayIndex + 1).padStart(2, "0")}</strong>
       </div>
       <div className="chapter-heading-copy">
         {language === "en" && (
@@ -762,6 +776,7 @@ function BookContent({
             <ChapterCard
               key={`chapter-${segment.chapterIndex}-${index}`}
               chapterIndex={segment.chapterIndex}
+              displayIndex={getOrderedChapterDisplayIndex(segment.chapterIndex)}
               currentChapters={currentChapters}
               language={language}
               t={t}
@@ -789,7 +804,7 @@ function BookContent({
             >
               <div className="section-rule" aria-hidden="true">
                 <span>
-                  {String(chapterIndex + 1).padStart(2, "0")}.
+                  {String(getOrderedChapterDisplayIndex(chapterIndex) + 1).padStart(2, "0")}.
                   {String(sectionIndex + 1).padStart(2, "0")}
                 </span>
                 <i />
@@ -1002,10 +1017,10 @@ function Hero({
           </a>
           <a
             className="button button-quiet"
-            href="#chapter-1"
+            href={`#chapter-${chapterOrder[0] + 1}`}
             onClick={(event) => {
               event.preventDefault();
-              onNavigate("chapter-1", "reader");
+              onNavigate(`chapter-${chapterOrder[0] + 1}`, "reader");
             }}
           >
             <List size={16} aria-hidden="true" />
@@ -1527,7 +1542,9 @@ function App() {
   const [bookmarks, setBookmarks] = useState<SavedPassage[]>(loadSavedPassages);
   const [notes, setNotes] = useState<ReadingNote[]>(loadReadingNotes);
   const [readingActivity, setReadingActivity] = useState<string[]>(loadReadingActivity);
-  const [activeSectionId, setActiveSectionId] = useState(sectionId(0, 0));
+  const [activeSectionId, setActiveSectionId] = useState(
+    sectionId(chapterOrder[0], 0),
+  );
   const [showBackToTop, setShowBackToTop] = useState(false);
   const [activeNavigation, setActiveNavigation] = useState<NavigationId>("reader");
   const [bookContentsOpen, setBookContentsOpen] = useState(false);
@@ -1536,7 +1553,7 @@ function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [noteOpen, setNoteOpen] = useState(false);
-  const [noteContext, setNoteContext] = useState(sectionId(0, 0));
+  const [noteContext, setNoteContext] = useState(sectionId(chapterOrder[0], 0));
   const [viewingNote, setViewingNote] = useState<{
     note: ReadingNote;
     index: number;
@@ -1552,9 +1569,9 @@ function App() {
       }
     }
     return {
-      chapterIndex: 0,
+      chapterIndex: chapterOrder[0],
       sectionIndex: 0,
-      title: currentChapters[0]?.sections[0] ?? "",
+      title: currentChapters[chapterOrder[0]]?.sections[0] ?? "",
     };
   }, [activeSectionId, currentChapters]);
 
@@ -1908,7 +1925,7 @@ function App() {
       return;
     }
 
-    setActiveSectionId(sectionId(0, 0));
+    setActiveSectionId(sectionId(chapterOrder[0], 0));
     setActiveNavigation("reader");
     const previousScrollBehavior = document.documentElement.style.scrollBehavior;
     document.documentElement.style.scrollBehavior = "auto";
