@@ -200,7 +200,9 @@ button:disabled {
   background: var(--page);
   cursor: pointer;
   text-align: left;
-  transition: border-color 150ms ease, background 150ms ease;
+  transition:
+    border-color 150ms ease,
+    background 150ms ease;
 }
 
 .top-search:hover {
@@ -266,7 +268,10 @@ button:disabled {
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  transition: color 150ms ease, background 150ms ease, border-color 150ms ease;
+  transition:
+    color 150ms ease,
+    background 150ms ease,
+    border-color 150ms ease;
   user-select: none;
 }
 
@@ -302,7 +307,10 @@ button:disabled {
   color: var(--muted);
   background: var(--surface);
   cursor: pointer;
-  transition: color 150ms ease, background 150ms ease, border-color 150ms ease;
+  transition:
+    color 150ms ease,
+    background 150ms ease,
+    border-color 150ms ease;
 }
 
 .header-icon:hover,
@@ -371,7 +379,9 @@ button:disabled {
   color: var(--muted);
   font-size: 11px;
   font-weight: 500;
-  transition: color 150ms ease, background 150ms ease;
+  transition:
+    color 150ms ease,
+    background 150ms ease;
 }
 
 .nav-link:hover {
@@ -420,7 +430,9 @@ button:disabled {
 .nav-dropdown-chevron {
   margin-left: auto;
   color: var(--muted);
-  transition: transform 240ms cubic-bezier(0.4, 0, 0.2, 1), color 150ms ease;
+  transition:
+    transform 240ms cubic-bezier(0.4, 0, 0.2, 1),
+    color 150ms ease;
   flex-shrink: 0;
 }
 
@@ -443,10 +455,11 @@ button:disabled {
   grid-template-rows: 0fr;
   opacity: 0;
   visibility: hidden;
-  transition: grid-template-rows 250ms cubic-bezier(0.4, 0, 0.2, 1),
-              opacity 200ms ease,
-              visibility 250ms ease,
-              margin 250ms ease;
+  transition:
+    grid-template-rows 250ms cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 200ms ease,
+    visibility 250ms ease,
+    margin 250ms ease;
   margin-top: 0;
 }
 
@@ -506,7 +519,9 @@ button:disabled {
   background: transparent;
   cursor: pointer;
   text-align: left;
-  transition: background 150ms ease, color 150ms ease;
+  transition:
+    background 150ms ease,
+    color 150ms ease;
 }
 
 .toc-chapter-title:hover {
@@ -531,7 +546,9 @@ button:disabled {
   font-family: "DM Sans", sans-serif;
   font-size: 9px;
   font-weight: 600;
-  transition: color 150ms ease, background 150ms ease;
+  transition:
+    color 150ms ease,
+    background 150ms ease;
 }
 
 .toc-chapter-title:hover .toc-chapter-index,
@@ -553,7 +570,9 @@ button:disabled {
 .toc-chapter-title svg {
   flex: 0 0 auto;
   color: var(--muted);
-  transition: transform 150ms ease, color 150ms ease;
+  transition:
+    transform 150ms ease,
+    color 150ms ease;
 }
 
 .toc-chapter-title:hover svg {
@@ -585,7 +604,9 @@ button:disabled {
   font-size: 10px;
   line-height: 1.35;
   text-decoration: none;
-  transition: color 150ms ease, background 150ms ease;
+  transition:
+    color 150ms ease,
+    background 150ms ease;
 }
 
 .toc-section-link:hover {
@@ -605,7 +626,9 @@ button:disabled {
   flex: 0 0 4px;
   border-radius: 50%;
   background: #c4c9c1;
-  transition: background 150ms ease, transform 150ms ease;
+  transition:
+    background 150ms ease,
+    transform 150ms ease;
 }
 
 :root[data-theme="dark"] .toc-dot {
@@ -712,9 +735,23 @@ button:disabled {
   inset: 0;
   opacity: 0.1;
   background-image:
-    linear-gradient(30deg, transparent 47%, #c1a55e 48%, #c1a55e 49%, transparent 50%),
-    linear-gradient(150deg, transparent 47%, #c1a55e 48%, #c1a55e 49%, transparent 50%);
-  background-position: 0 0, 32px 0;
+    linear-gradient(
+      30deg,
+      transparent 47%,
+      #c1a55e 48%,
+      #c1a55e 49%,
+      transparent 50%
+    ),
+    linear-gradient(
+      150deg,
+      transparent 47%,
+      #c1a55e 48%,
+      #c1a55e 49%,
+      transparent 50%
+    );
+  background-position:
+    0 0,
+    32px 0;
   background-size: 64px 108px;
   mask-image: linear-gradient(90deg, transparent 0%, #000 28%, #000 100%);
 }
@@ -723,8 +760,18 @@ button:disabled {
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(circle at 50% 50%, transparent 0 2px, rgb(225 205 149 / 60%) 2.5px 3px, transparent 3.5px),
-    radial-gradient(circle at 0 0, transparent 0 2px, rgb(225 205 149 / 55%) 2.5px 3px, transparent 3.5px);
+    radial-gradient(
+      circle at 50% 50%,
+      transparent 0 2px,
+      rgb(225 205 149 / 60%) 2.5px 3px,
+      transparent 3.5px
+    ),
+    radial-gradient(
+      circle at 0 0,
+      transparent 0 2px,
+      rgb(225 205 149 / 55%) 2.5px 3px,
+      transparent 3.5px
+    );
   background-size: 64px 108px;
   content: "";
 }
@@ -804,7 +851,10 @@ button:disabled {
   cursor: pointer;
   font-size: 10px;
   font-weight: 600;
-  transition: transform 150ms ease, background 150ms ease, border-color 150ms ease;
+  transition:
+    transform 150ms ease,
+    background 150ms ease,
+    border-color 150ms ease;
 }
 
 .button:hover {
@@ -867,7 +917,9 @@ button:disabled {
   color: #fffdf5;
   background: rgb(255 255 255 / 6%);
   backdrop-filter: blur(8px);
-  transition: background 160ms ease, border-color 160ms ease;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease;
   margin-top: 100px;
 }
 
@@ -998,7 +1050,9 @@ button:disabled {
   cursor: pointer;
   font-size: 9px;
   font-weight: 500;
-  transition: color 150ms ease, background 150ms ease;
+  transition:
+    color 150ms ease,
+    background 150ms ease;
 }
 
 .tool-button:hover,
@@ -1337,7 +1391,10 @@ button:disabled {
   background: transparent;
   cursor: pointer;
   opacity: 1;
-  transition: color 150ms ease, background 150ms ease, opacity 150ms ease;
+  transition:
+    color 150ms ease,
+    background 150ms ease,
+    opacity 150ms ease;
 }
 
 .book-section:hover .section-bookmark,
@@ -1729,7 +1786,10 @@ button:disabled {
   opacity: 0;
   pointer-events: none;
   transform: translateY(8px);
-  transition: opacity 160ms ease, transform 160ms ease, background 160ms ease;
+  transition:
+    opacity 160ms ease,
+    transform 160ms ease,
+    background 160ms ease;
 }
 
 .back-to-top.visible {
@@ -2370,7 +2430,10 @@ button:disabled {
   }
 
   .welcome {
-    height: 533.3px;
+    display: flex;
+    min-height: 533.3px;
+    height: auto;
+    flex-direction: column;
   }
 
   .welcome-pattern {
@@ -2379,10 +2442,12 @@ button:disabled {
   }
 
   .welcome-copy {
-    top: 94px;
+    position: relative;
+    top: auto;
     right: auto;
     left: 20px;
     width: calc(100% - 40px);
+    margin-top: 94px;
   }
 
   .hero-kicker {
@@ -2430,14 +2495,15 @@ button:disabled {
   }
 
   .journey-card {
-    bottom: 24px;
-    left: 20px;
+    position: relative;
+    bottom: auto;
+    left: auto;
     width: calc(100% - 40px);
     min-height: 117px;
     gap: 19px;
     padding: 20px;
     border-width: 0.64px;
-    margin-top: 50px;
+    margin: 28px 20px 24px;
   }
 
   .journey-copy {
@@ -2914,4 +2980,3 @@ html[dir="rtl"] .back-to-top {
     left: 12px;
   }
 }
-
